@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Script completo para configuração do ambiente de desenvolvimento Ubuntu LTS
+# Script completo para configuração do ambiente de desenvolvimento Fedora
 # Autor: Guilherme Celso (adaptado)
 # Descrição: Automatiza a instalação e a validação de ferramentas essenciais
-#            no Ubuntu LTS. Somente Ubuntu LTS é aceito (nenhuma outra distro).
+#            no Fedora. Somente Fedora é aceito (nenhuma outra distro).
 
 set -Eeuo pipefail
 
@@ -19,7 +19,7 @@ print_warning() { echo -e "${YELLOW}⚠️  $1${NC}"; }
 print_error()   { echo -e "${RED}❌ $1${NC}"; }
 
 command_exists()    { command -v "$1" >/dev/null 2>&1; }
-package_installed() { dpkg -s "$1" >/dev/null 2>&1; }
+package_installed() { rpm -q "$1" >/dev/null 2>&1; }
 docker_compose_exists() { command_exists docker && docker compose version >/dev/null 2>&1; }
 
 # ====================================
@@ -80,32 +80,9 @@ check_zsh_login_shell() {
 }
 check_diodon()    { package_installed diodon; }
 
-# Somente Ubuntu LTS: releases de abril em ano par (20.04, 22.04, 24.04, 26.04...).
-# Interinos como 25.04 e 25.10 caem fora automaticamente.
-is_ubuntu_lts() {
-    [ "${ID:-}" = "ubuntu" ] || return 1
-    [[ "${VERSION_ID:-}" =~ ^[0-9]+\.04$ ]] || return 1
-    local major="${VERSION_ID%%.*}"
-    (( 10#$major % 2 == 0 ))
-}
-
-repair_legacy_docker_key() {
-    local docker_key_asc=/etc/apt/keyrings/docker.asc
-    local docker_key_gpg=/etc/apt/keyrings/docker.gpg
-    local docker_source=/etc/apt/sources.list.d/docker.list
-
-    # Versões anteriores deste script salvaram uma chave binária com extensão
-    # .asc. O APT usa a extensão para escolher o formato e ignora essa chave,
-    # causando NO_PUBKEY antes que o instalador consiga atualizá-la.
-    if [ -r "$docker_key_asc" ] && [ -r "$docker_source" ] && \
-       ! grep -q '^-----BEGIN PGP PUBLIC KEY BLOCK-----' "$docker_key_asc"; then
-        print_warning "Corrigindo formato de uma chave antiga do repositório Docker..."
-        sudo install -m 0644 "$docker_key_asc" "$docker_key_gpg"
-        sudo sed -i \
-            's#/etc/apt/keyrings/docker\.asc#/etc/apt/keyrings/docker.gpg#g' \
-            "$docker_source"
-        print_success "Chave antiga do Docker reparada para permitir o apt update."
-    fi
+# Somente Fedora: identificado pelo campo ID do /etc/os-release.
+is_fedora() {
+    [ "${ID:-}" = "fedora" ]
 }
 
 on_error() {
@@ -117,7 +94,7 @@ on_error() {
 
 trap on_error ERR
 
-echo "🚀 Iniciando configuração completa do ambiente de desenvolvimento Ubuntu LTS..."
+echo "🚀 Iniciando configuração completa do ambiente de desenvolvimento Fedora..."
 echo "⏱️  Este processo pode levar alguns minutos..."
 echo ""
 
@@ -136,7 +113,7 @@ print_status "Validando acesso administrativo..."
 sudo -v
 
 # ====================================
-# 0. VERIFICAÇÃO DO SISTEMA OPERACIONAL (SOMENTE UBUNTU LTS)
+# 0. VERIFICAÇÃO DO SISTEMA OPERACIONAL (SOMENTE FEDORA)
 # ====================================
 print_status "Verificando distribuição..."
 if [ ! -r /etc/os-release ]; then
@@ -147,43 +124,28 @@ fi
 # shellcheck disable=SC1091
 . /etc/os-release
 
-if [ "${ID:-}" != "ubuntu" ]; then
-    print_error "Este script foi feito exclusivamente para Ubuntu LTS (nenhuma outra distribuição)."
+if ! is_fedora; then
+    print_error "Este script foi feito exclusivamente para Fedora (nenhuma outra distribuição)."
     print_warning "Sistema detectado: ${PRETTY_NAME:-desconhecido}"
-    print_warning "Linux Mint, Debian, Fedora e demais distros não são suportadas."
+    print_warning "Ubuntu, Linux Mint, Debian, Arch e demais distros não são suportadas."
     exit 1
 fi
 
-if ! is_ubuntu_lts; then
-    print_error "Esta versão do Ubuntu não é LTS (long term support)."
-    print_warning "Sistema detectado: ${PRETTY_NAME:-desconhecido} (VERSION_ID=${VERSION_ID:-desconhecido})"
-    print_warning "Atualize para a versão LTS mais recente antes de executar este script."
-    exit 1
-fi
-
-print_success "Ubuntu LTS detectado! (${PRETTY_NAME})"
+print_success "Fedora detectado! (${PRETTY_NAME})"
 echo ""
-
-# Precisa ocorrer antes do primeiro apt update, pois um repositório Docker
-# deixado por versões anteriores pode bloquear a atualização de todos os pacotes.
-repair_legacy_docker_key
 
 # ====================================
 # 1. ATUALIZAÇÃO DO SISTEMA
 # ====================================
-print_status "Atualizando índice de pacotes..."
-sudo apt update -y
-
-print_status "Atualizando pacotes instalados..."
-sudo apt upgrade -y
+print_status "Atualizando pacotes do sistema..."
+sudo dnf upgrade -y
 print_success "Sistema atualizado!"
 
 # ====================================
 # 2. DEPENDÊNCIAS BÁSICAS
 # ====================================
 print_status "Verificando/Instalando dependências básicas..."
-sudo apt install -y ca-certificates curl gnupg lsb-release software-properties-common openssh-client
-sudo add-apt-repository -y universe
+sudo dnf install -y ca-certificates curl gnupg2 openssh-clients
 register_validation "curl" check_curl
 print_success "Dependências básicas instaladas!"
 
@@ -193,7 +155,7 @@ print_success "Dependências básicas instaladas!"
 register_validation "Git" check_git
 print_status "Verificando/Instalando Git..."
 if ! command_exists git; then
-    sudo apt install -y git
+    sudo dnf install -y git
     print_success "Git instalado!"
 else
     print_success "Git já está instalado!"
@@ -204,7 +166,9 @@ fi
 # Não cadastra identidade global: apenas chaves SSH para autenticação.
 # O usuário escolhe quantas chaves quer criar (sem limite; 0 = nenhuma) e,
 # antes de criar novas, é sempre perguntado se as existentes devem ser
-# apagadas. Para cada chave: nome (arquivo/alias) e email (comentário).
+# apagadas. Para cada chave: email (comentário). O nome (arquivo/alias) só é
+# perguntado quando há mais de uma chave; com apenas 1 chave ele é fixado
+# automaticamente como "default".
 # ====================================
 SSH_KEY_PATHS=()
 SSH_LABELS=()
@@ -268,7 +232,7 @@ test_github_ssh() {
 print_status "Configurando chaves SSH..."
 
 if ! command_exists ssh-keygen; then
-    sudo apt install -y openssh-client
+    sudo dnf install -y openssh-clients
     hash -r
 fi
 
@@ -339,7 +303,12 @@ else
         ssh_emails=()
         for ((i = 1; i <= ssh_count; i++)); do
             # Nome da chave: usado no nome do arquivo e no alias do ~/.ssh/config
+            # Com apenas 1 chave não se pede nome: usa o padrão "default".
             ssh_name=""
+            if [ "$ssh_count" -eq 1 ]; then
+                ssh_name="default"
+                print_status "Somente 1 chave solicitada: nome padrão \"default\" (sem perguntar)."
+            fi
             while [ -z "$ssh_name" ]; do
                 if ! read -r -p "Nome da chave ${i} de ${ssh_count} (ex: pessoal, trabalho): " ssh_name; then
                     echo ""
@@ -464,36 +433,23 @@ fi
 register_validation "Docker Engine + Compose" check_docker
 print_status "Verificando/Instalando Docker Engine e Docker Compose..."
 if ! check_docker; then
-    # Remove versões antigas, se houver
-    sudo apt remove -y docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc || true
-
-    # Adiciona chave e repositório oficial Docker (repositório Ubuntu)
-    sudo install -m 0755 -d /etc/apt/keyrings
-
-    # Atualiza a chave sempre, evitando manter uma chave vazia, corrompida ou antiga.
-    docker_key_tmp="$(mktemp)"
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o "$docker_key_tmp"
-    sudo install -m 0644 "$docker_key_tmp" /etc/apt/keyrings/docker.asc
-    rm -f "$docker_key_tmp"
-
-    # Codename do próprio Ubuntu LTS detectado (sem depender de outras distros).
-    ubuntu_codename="${VERSION_CODENAME:-}"
-    if [ -z "$ubuntu_codename" ] && command_exists lsb_release; then
-        ubuntu_codename="$(lsb_release -cs)"
+    # Remove o alias "docker" do podman, se houver, para não conflitar
+    if rpm -q podman-docker >/dev/null 2>&1; then
+        sudo dnf remove -y podman-docker
     fi
 
-    if [ -z "$ubuntu_codename" ]; then
-        print_error "Não foi possível detectar o codename do Ubuntu LTS."
-        print_warning "A variável VERSION_CODENAME não existe em /etc/os-release e o lsb_release não está disponível."
-        exit 1
+    # Adiciona o repositório oficial do Docker (Fedora) com a chave GPG dele.
+    # Fedora 41+ usa dnf5, que trocou "--add-repo" por "addrepo --from-repofile";
+    # nos Fedora antigos (dnf4) o parâmetro antigo continua válido.
+    sudo dnf install -y dnf-plugins-core
+    if dnf config-manager --help 2>/dev/null | grep -q -- '--add-repo'; then
+        sudo dnf config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo
+    else
+        sudo dnf config-manager addrepo --overwrite \
+            --from-repofile=https://download.docker.com/linux/fedora/docker-ce.repo
     fi
 
-    echo \
-      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
-      ${ubuntu_codename} stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-    sudo apt update -y
-    sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
     # Atualiza o cache de comandos do shell e comprova os executáveis.
     hash -r
@@ -519,11 +475,19 @@ register_validation "Node.js 24 LTS" check_node
 register_validation "npm" check_npm
 print_status "Verificando/Instalando Node.js 24..."
 if ! check_node || ! command_exists npm; then
+    # Primeiro tenta o repositório oficial NodeSource (rpm). Se o script de
+    # setup não suportar esta release do Fedora, recorre ao repositório do
+    # próprio Fedora. A validação da versão 24.x acontece logo abaixo.
     nodesource_setup_tmp="$(mktemp)"
-    curl -fsSL https://deb.nodesource.com/setup_24.x -o "$nodesource_setup_tmp"
-    sudo -E bash "$nodesource_setup_tmp"
-    rm -f "$nodesource_setup_tmp"
-    sudo apt install -y nodejs
+    if curl -fsSL https://rpm.nodesource.com/setup_24.x -o "$nodesource_setup_tmp" \
+       && sudo -E bash "$nodesource_setup_tmp"; then
+        rm -f "$nodesource_setup_tmp"
+        sudo dnf install -y nodejs
+    else
+        rm -f "$nodesource_setup_tmp"
+        print_warning "NodeSource indisponível para este Fedora; usando o repositório padrão do Fedora."
+        sudo dnf install -y nodejs
+    fi
 
     hash -r
     if ! command_exists node || ! command_exists npm; then
@@ -550,7 +514,7 @@ register_validation "Zsh como shell padrão" check_zsh_login_shell
 
 print_status "Verificando/Instalando Zsh..."
 if ! command_exists zsh; then
-    sudo apt install -y zsh
+    sudo dnf install -y zsh
     hash -r
     if ! command_exists zsh; then
         print_error "O Zsh não ficou disponível após a instalação."
@@ -602,19 +566,6 @@ else
 fi
 
 # ====================================
-# 8. GERENCIADOR DE ÁREA DE TRANSFERÊNCIA
-# ====================================
-register_validation "Diodon (clipboard)" check_diodon
-print_status "Verificando ferramenta de clipboard..."
-if package_installed diodon; then
-    print_success "Diodon já está instalado!"
-else
-    print_warning "Instalando Diodon..."
-    sudo apt install -y diodon
-    print_success "Diodon instalado!"
-fi
-
-# ====================================
 # 9. VALIDAÇÃO FINAL (item a item)
 # ====================================
 run_validations
@@ -637,8 +588,7 @@ if command_exists node;   then echo "   Node.js:    $(node --version)"; fi
 if command_exists npm;    then echo "   NPM:        $(npm --version)"; fi
 if command_exists zsh;    then echo "   Zsh:        $(zsh --version)"; fi
 if check_omz;             then echo "   Oh My Zsh:  $(git -C "$HOME/.oh-my-zsh" describe --tags 2>/dev/null || echo 'instalado')"; fi
-if package_installed diodon; then echo "   Diodon:     $(diodon --version 2>/dev/null || echo instalado)"; fi
-echo "   Shell:      $(getent passwd "$(id -un)" | cut -d: -f7)"
+
 if [ "${#SSH_KEY_PATHS[@]}" -gt 0 ]; then
     for key_path in "${SSH_KEY_PATHS[@]}"; do
         echo "   SSH key:    $key_path"
