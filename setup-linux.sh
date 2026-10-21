@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Script completo para configuração do ambiente de desenvolvimento Fedora
+# Script completo para configuração do ambiente de desenvolvimento Debian/Ubuntu
 # Autor: Guilherme Celso (adaptado)
 # Descrição: Automatiza a instalação e a validação de ferramentas essenciais
-#            no Fedora. Somente Fedora é aceito (nenhuma outra distro).
+#            no Debian/Ubuntu (apt/dpkg). Outras famílias de distro são recusadas.
 
 set -Eeuo pipefail
 
@@ -19,7 +19,8 @@ print_warning() { echo -e "${YELLOW}⚠️  $1${NC}"; }
 print_error()   { echo -e "${RED}❌ $1${NC}"; }
 
 command_exists()    { command -v "$1" >/dev/null 2>&1; }
-package_installed() { rpm -q "$1" >/dev/null 2>&1; }
+package_installed() { dpkg -s "$1" >/dev/null 2>&1; }
+export DEBIAN_FRONTEND=noninteractive
 docker_compose_exists() { command_exists docker && docker compose version >/dev/null 2>&1; }
 
 # ====================================
@@ -79,10 +80,47 @@ check_zsh_login_shell() {
     [ -n "$current_shell" ] && [ "$current_shell" = "$zsh_path" ]
 }
 check_diodon()    { package_installed diodon; }
+check_chrome()    { package_installed google-chrome-stable; }
+check_vscode()    { package_installed code; }
 
-# Somente Fedora: identificado pelo campo ID do /etc/os-release.
-is_fedora() {
-    [ "${ID:-}" = "fedora" ]
+# Plugins externos clonados em ~/.oh-my-zsh/custom/plugins (nome=repositório).
+# history-substring-search já vem junto do Oh My Zsh; autojump vem do apt.
+ZSH_CUSTOM_DIR="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}"
+ZSH_EXTERNAL_PLUGINS=(
+    "zsh-autosuggestions=https://github.com/zsh-users/zsh-autosuggestions"
+    "zsh-completions=https://github.com/zsh-users/zsh-completions"
+    "zsh-syntax-highlighting=https://github.com/zsh-users/zsh-syntax-highlighting"
+)
+# zsh-syntax-highlighting deve ser o último da lista.
+ZSH_PLUGIN_LIST="git zsh-autosuggestions zsh-completions history-substring-search autojump zsh-syntax-highlighting"
+
+check_zsh_plugins() {
+    local entry name plugin
+    for entry in "${ZSH_EXTERNAL_PLUGINS[@]}"; do
+        [ -d "$ZSH_CUSTOM_DIR/plugins/${entry%%=*}" ] || return 1
+    done
+    [ -d "$HOME/.oh-my-zsh/plugins/history-substring-search" ] || return 1
+    package_installed autojump || return 1
+    for plugin in $ZSH_PLUGIN_LIST; do
+        grep -Eq "^plugins=\(.*\b${plugin}\b.*\)" "$HOME/.zshrc" || return 1
+    done
+}
+
+# Debian/Ubuntu e derivados (Mint etc.): ID ou ID_LIKE do /etc/os-release.
+is_debian_like() {
+    case " ${ID:-} ${ID_LIKE:-} " in
+        *" debian "*|*" ubuntu "*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Baixa um .deb para arquivo temporário e instala com dpkg (o apt -f resolve dependências).
+install_deb() {
+    local url="$1" tmp
+    tmp="$(mktemp --suffix=.deb)"
+    curl -fsSL "$url" -o "$tmp"
+    sudo dpkg -i "$tmp" || sudo apt-get install -f -y
+    rm -f "$tmp"
 }
 
 on_error() {
@@ -94,7 +132,7 @@ on_error() {
 
 trap on_error ERR
 
-echo "🚀 Iniciando configuração completa do ambiente de desenvolvimento Fedora..."
+echo "🚀 Iniciando configuração completa do ambiente de desenvolvimento Debian/Ubuntu..."
 echo "⏱️  Este processo pode levar alguns minutos..."
 echo ""
 
@@ -113,7 +151,7 @@ print_status "Validando acesso administrativo..."
 sudo -v
 
 # ====================================
-# 0. VERIFICAÇÃO DO SISTEMA OPERACIONAL (SOMENTE FEDORA)
+# 0. VERIFICAÇÃO DO SISTEMA OPERACIONAL (DEBIAN/UBUNTU)
 # ====================================
 print_status "Verificando distribuição..."
 if [ ! -r /etc/os-release ]; then
@@ -124,28 +162,33 @@ fi
 # shellcheck disable=SC1091
 . /etc/os-release
 
-if ! is_fedora; then
-    print_error "Este script foi feito exclusivamente para Fedora (nenhuma outra distribuição)."
+if ! is_debian_like; then
+    print_error "Este script foi feito para Debian/Ubuntu e derivados (apt/dpkg)."
     print_warning "Sistema detectado: ${PRETTY_NAME:-desconhecido}"
-    print_warning "Ubuntu, Linux Mint, Debian, Arch e demais distros não são suportadas."
     exit 1
 fi
 
-print_success "Fedora detectado! (${PRETTY_NAME})"
+if [ "$(dpkg --print-architecture)" != "amd64" ]; then
+    print_error "Os .deb do Chrome e do VS Code são amd64; arquitetura detectada: $(dpkg --print-architecture)."
+    exit 1
+fi
+
+print_success "Debian/Ubuntu detectado! (${PRETTY_NAME})"
 echo ""
 
 # ====================================
 # 1. ATUALIZAÇÃO DO SISTEMA
 # ====================================
 print_status "Atualizando pacotes do sistema..."
-sudo dnf upgrade -y
+sudo apt-get update
+sudo apt-get upgrade -y
 print_success "Sistema atualizado!"
 
 # ====================================
 # 2. DEPENDÊNCIAS BÁSICAS
 # ====================================
 print_status "Verificando/Instalando dependências básicas..."
-sudo dnf install -y ca-certificates curl gnupg2 openssh-clients
+sudo apt-get install -y ca-certificates curl gnupg openssh-client
 register_validation "curl" check_curl
 print_success "Dependências básicas instaladas!"
 
@@ -155,7 +198,7 @@ print_success "Dependências básicas instaladas!"
 register_validation "Git" check_git
 print_status "Verificando/Instalando Git..."
 if ! command_exists git; then
-    sudo dnf install -y git
+    sudo apt-get install -y git
     print_success "Git instalado!"
 else
     print_success "Git já está instalado!"
@@ -232,7 +275,7 @@ test_github_ssh() {
 print_status "Configurando chaves SSH..."
 
 if ! command_exists ssh-keygen; then
-    sudo dnf install -y openssh-clients
+    sudo apt-get install -y openssh-client
     hash -r
 fi
 
@@ -428,28 +471,51 @@ else
 fi
 
 # ====================================
+# 4.1 IDENTIDADE DO GIT (user.name / user.email globais)
+# Só pergunta em terminal; Enter mantém o valor atual (se houver).
+# ====================================
+print_status "Configurando identidade global do Git..."
+if [ ! -t 0 ]; then
+    print_warning "Execução não interativa: identidade do Git pulada."
+else
+    for git_key in name email; do
+        git_current="$(git config --global "user.$git_key" 2>/dev/null || true)"
+        git_value=""
+        while [ -z "$git_value" ]; do
+            if ! read -r -p "git user.$git_key${git_current:+ [$git_current]}: " git_value; then
+                echo ""
+                print_error "Entrada cancelada pelo usuário."
+                exit 1
+            fi
+            git_value="${git_value:-$git_current}"
+            if [ -z "$git_value" ] || { [ "$git_key" = email ] && [[ "$git_value" != *@* ]]; }; then
+                print_warning "Informe um valor válido para user.$git_key."
+                git_value=""
+                git_current=""
+            fi
+        done
+        git config --global "user.$git_key" "$git_value"
+    done
+    print_success "Git: $(git config --global user.name) <$(git config --global user.email)>"
+fi
+
+# ====================================
 # 5. DOCKER (repositório oficial)
 # ====================================
 register_validation "Docker Engine + Compose" check_docker
 print_status "Verificando/Instalando Docker Engine e Docker Compose..."
 if ! check_docker; then
-    # Remove o alias "docker" do podman, se houver, para não conflitar
-    if rpm -q podman-docker >/dev/null 2>&1; then
-        sudo dnf remove -y podman-docker
-    fi
-
-    # Adiciona o repositório oficial do Docker (Fedora) com a chave GPG dele.
-    # Fedora 41+ usa dnf5, que trocou "--add-repo" por "addrepo --from-repofile";
-    # nos Fedora antigos (dnf4) o parâmetro antigo continua válido.
-    sudo dnf install -y dnf-plugins-core
-    if dnf config-manager --help 2>/dev/null | grep -q -- '--add-repo'; then
-        sudo dnf config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo
-    else
-        sudo dnf config-manager addrepo --overwrite \
-            --from-repofile=https://download.docker.com/linux/fedora/docker-ce.repo
-    fi
-
-    sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    # Repositório oficial do Docker (apt) com a chave GPG dele; /linux/ubuntu ou /linux/debian.
+    docker_distro="$ID"
+    if [ "$docker_distro" = "ubuntu" ] || [ -n "${UBUNTU_CODENAME:-}" ]; then docker_distro="ubuntu"; else docker_distro="debian"; fi
+    docker_codename="${UBUNTU_CODENAME:-${VERSION_CODENAME:-}}"
+    sudo install -m 0755 -d /etc/apt/keyrings
+    sudo curl -fsSL "https://download.docker.com/linux/$docker_distro/gpg" -o /etc/apt/keyrings/docker.asc
+    sudo chmod a+r /etc/apt/keyrings/docker.asc
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/$docker_distro $docker_codename stable" \
+        | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+    sudo apt-get update
+    sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
     # Atualiza o cache de comandos do shell e comprova os executáveis.
     hash -r
@@ -475,19 +541,12 @@ register_validation "Node.js 24 LTS" check_node
 register_validation "npm" check_npm
 print_status "Verificando/Instalando Node.js 24..."
 if ! check_node || ! command_exists npm; then
-    # Primeiro tenta o repositório oficial NodeSource (rpm). Se o script de
-    # setup não suportar esta release do Fedora, recorre ao repositório do
-    # próprio Fedora. A validação da versão 24.x acontece logo abaixo.
+    # Repositório oficial NodeSource (deb). A validação da versão 24.x acontece logo abaixo.
     nodesource_setup_tmp="$(mktemp)"
-    if curl -fsSL https://rpm.nodesource.com/setup_24.x -o "$nodesource_setup_tmp" \
-       && sudo -E bash "$nodesource_setup_tmp"; then
-        rm -f "$nodesource_setup_tmp"
-        sudo dnf install -y nodejs
-    else
-        rm -f "$nodesource_setup_tmp"
-        print_warning "NodeSource indisponível para este Fedora; usando o repositório padrão do Fedora."
-        sudo dnf install -y nodejs
-    fi
+    curl -fsSL https://deb.nodesource.com/setup_24.x -o "$nodesource_setup_tmp"
+    sudo -E bash "$nodesource_setup_tmp"
+    rm -f "$nodesource_setup_tmp"
+    sudo apt-get install -y nodejs
 
     hash -r
     if ! command_exists node || ! command_exists npm; then
@@ -510,11 +569,12 @@ fi
 # ====================================
 register_validation "Zsh" check_zsh
 register_validation "Oh My Zsh" check_omz
+register_validation "Plugins do Zsh" check_zsh_plugins
 register_validation "Zsh como shell padrão" check_zsh_login_shell
 
 print_status "Verificando/Instalando Zsh..."
 if ! command_exists zsh; then
-    sudo dnf install -y zsh
+    sudo apt-get install -y zsh
     hash -r
     if ! command_exists zsh; then
         print_error "O Zsh não ficou disponível após a instalação."
@@ -548,6 +608,27 @@ else
     print_success "Oh My Zsh já está instalado!"
 fi
 
+print_status "Instalando plugins do Zsh..."
+sudo apt-get install -y autojump
+for entry in "${ZSH_EXTERNAL_PLUGINS[@]}"; do
+    plugin_dir="$ZSH_CUSTOM_DIR/plugins/${entry%%=*}"
+    if [ -d "$plugin_dir" ]; then
+        print_success "${entry%%=*} já está instalado!"
+    else
+        git clone --depth 1 "${entry#*=}" "$plugin_dir"
+        print_success "${entry%%=*} instalado!"
+    fi
+done
+
+# ponytail: substitui a linha plugins=(...) inteira; plugins extras seus nela são perdidos.
+touch "$HOME/.zshrc"
+if grep -q '^plugins=(' "$HOME/.zshrc"; then
+    sed -i "s/^plugins=(.*)/plugins=($ZSH_PLUGIN_LIST)/" "$HOME/.zshrc"
+else
+    echo "plugins=($ZSH_PLUGIN_LIST)" >> "$HOME/.zshrc"
+fi
+print_success "Plugins ativados no ~/.zshrc!"
+
 print_status "Definindo Zsh como shell padrão..."
 zsh_path="$(command -v zsh)"
 if check_zsh_login_shell; then
@@ -564,6 +645,59 @@ else
         exit 1
     fi
 fi
+
+# ====================================
+# 8. GOOGLE CHROME E VS CODE (.deb amd64 + dpkg)
+# ====================================
+register_validation "Google Chrome" check_chrome
+register_validation "Visual Studio Code" check_vscode
+
+print_status "Verificando/Instalando Google Chrome..."
+if ! check_chrome; then
+    install_deb "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb"
+    print_success "Google Chrome instalado!"
+else
+    print_success "Google Chrome já está instalado!"
+fi
+
+print_status "Verificando/Instalando Visual Studio Code..."
+if ! check_vscode; then
+    install_deb "https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-x64"
+    print_success "Visual Studio Code instalado!"
+else
+    print_success "Visual Studio Code já está instalado!"
+fi
+
+# IDs das extensões (publisher.nome); edite a lista à vontade.
+VSCODE_EXTENSIONS=(
+    "anthropic.claude-code"
+    "bradlc.vscode-tailwindcss"
+    "esbenp.prettier-vscode"
+    "expo.vscode-expo-tools"
+    "mikestead.dotenv"
+    "ms-azuretools.vscode-containers"
+    "ms-azuretools.vscode-docker"
+    "ms-kubernetes-tools.vscode-kubernetes-tools"
+    "ms-python.debugpy"
+    "ms-python.python"
+    "ms-python.vscode-python-envs"
+    "ms-vscode-remote.remote-containers"
+    "pkief.material-icon-theme"
+    "prisma.prisma"
+    "redhat.vscode-xml"
+    "redhat.vscode-yaml"
+    "typescriptteam.native-preview"
+)
+print_status "Instalando extensões do VS Code..."
+vscode_installed="$(code --list-extensions)"
+for ext in "${VSCODE_EXTENSIONS[@]}"; do
+    if grep -qixF "$ext" <<<"$vscode_installed"; then
+        print_success "$ext já está instalada!"
+    else
+        code --install-extension "$ext" >/dev/null
+        print_success "$ext instalada!"
+    fi
+done
 
 # ====================================
 # 9. VALIDAÇÃO FINAL (item a item)
