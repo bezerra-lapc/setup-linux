@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Script completo para configuração do ambiente de desenvolvimento Debian/Ubuntu
+# Script completo para configuração do ambiente de desenvolvimento Fedora
 # Autor: Guilherme Celso (adaptado)
 # Descrição: Automatiza a instalação e a validação de ferramentas essenciais
-#            no Debian/Ubuntu (apt/dpkg). Outras famílias de distro são recusadas.
+#            no Fedora (dnf/rpm). Outras famílias de distro são recusadas.
 
 set -Eeuo pipefail
 
@@ -19,8 +19,7 @@ print_warning() { echo -e "${YELLOW}⚠️  $1${NC}"; }
 print_error()   { echo -e "${RED}❌ $1${NC}"; }
 
 command_exists()    { command -v "$1" >/dev/null 2>&1; }
-package_installed() { dpkg -s "$1" >/dev/null 2>&1; }
-export DEBIAN_FRONTEND=noninteractive
+package_installed() { rpm -q "$1" >/dev/null 2>&1; }
 docker_compose_exists() { command_exists docker && docker compose version >/dev/null 2>&1; }
 
 # ====================================
@@ -79,12 +78,9 @@ check_zsh_login_shell() {
     current_shell="$(getent passwd "$(id -un)" | cut -d: -f7)"
     [ -n "$current_shell" ] && [ "$current_shell" = "$zsh_path" ]
 }
-check_diodon()    { package_installed diodon; }
-check_chrome()    { package_installed google-chrome-stable; }
-check_vscode()    { package_installed code; }
 
 # Plugins externos clonados em ~/.oh-my-zsh/custom/plugins (nome=repositório).
-# history-substring-search já vem junto do Oh My Zsh; autojump vem do apt.
+# history-substring-search já vem junto do Oh My Zsh; autojump vem do dnf.
 ZSH_CUSTOM_DIR="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}"
 ZSH_EXTERNAL_PLUGINS=(
     "zsh-autosuggestions=https://github.com/zsh-users/zsh-autosuggestions"
@@ -95,7 +91,7 @@ ZSH_EXTERNAL_PLUGINS=(
 ZSH_PLUGIN_LIST="git zsh-autosuggestions zsh-completions history-substring-search autojump zsh-syntax-highlighting"
 
 check_zsh_plugins() {
-    local entry name plugin
+    local entry plugin
     for entry in "${ZSH_EXTERNAL_PLUGINS[@]}"; do
         [ -d "$ZSH_CUSTOM_DIR/plugins/${entry%%=*}" ] || return 1
     done
@@ -106,21 +102,9 @@ check_zsh_plugins() {
     done
 }
 
-# Debian/Ubuntu e derivados (Mint etc.): ID ou ID_LIKE do /etc/os-release.
-is_debian_like() {
-    case " ${ID:-} ${ID_LIKE:-} " in
-        *" debian "*|*" ubuntu "*) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
-# Baixa um .deb para arquivo temporário e instala com dpkg (o apt -f resolve dependências).
-install_deb() {
-    local url="$1" tmp
-    tmp="$(mktemp --suffix=.deb)"
-    curl -fsSL "$url" -o "$tmp"
-    sudo dpkg -i "$tmp" || sudo apt-get install -f -y
-    rm -f "$tmp"
+# Fedora: ID do /etc/os-release.
+is_fedora() {
+    [ "${ID:-}" = "fedora" ]
 }
 
 on_error() {
@@ -132,7 +116,7 @@ on_error() {
 
 trap on_error ERR
 
-echo "🚀 Iniciando configuração completa do ambiente de desenvolvimento Debian/Ubuntu..."
+echo "🚀 Iniciando configuração completa do ambiente de desenvolvimento Fedora..."
 echo "⏱️  Este processo pode levar alguns minutos..."
 echo ""
 
@@ -151,7 +135,7 @@ print_status "Validando acesso administrativo..."
 sudo -v
 
 # ====================================
-# 0. VERIFICAÇÃO DO SISTEMA OPERACIONAL (DEBIAN/UBUNTU)
+# 0. VERIFICAÇÃO DO SISTEMA OPERACIONAL (FEDORA)
 # ====================================
 print_status "Verificando distribuição..."
 if [ ! -r /etc/os-release ]; then
@@ -162,33 +146,27 @@ fi
 # shellcheck disable=SC1091
 . /etc/os-release
 
-if ! is_debian_like; then
-    print_error "Este script foi feito para Debian/Ubuntu e derivados (apt/dpkg)."
+if ! is_fedora; then
+    print_error "Este script foi feito para Fedora (dnf/rpm)."
     print_warning "Sistema detectado: ${PRETTY_NAME:-desconhecido}"
     exit 1
 fi
 
-if [ "$(dpkg --print-architecture)" != "amd64" ]; then
-    print_error "Os .deb do Chrome e do VS Code são amd64; arquitetura detectada: $(dpkg --print-architecture)."
-    exit 1
-fi
-
-print_success "Debian/Ubuntu detectado! (${PRETTY_NAME})"
+print_success "Fedora detectado! (${PRETTY_NAME})"
 echo ""
 
 # ====================================
 # 1. ATUALIZAÇÃO DO SISTEMA
 # ====================================
 print_status "Atualizando pacotes do sistema..."
-sudo apt-get update
-sudo apt-get upgrade -y
+sudo dnf upgrade -y --refresh
 print_success "Sistema atualizado!"
 
 # ====================================
 # 2. DEPENDÊNCIAS BÁSICAS
 # ====================================
 print_status "Verificando/Instalando dependências básicas..."
-sudo apt-get install -y ca-certificates curl gnupg openssh-client
+sudo dnf install -y ca-certificates curl gnupg2
 register_validation "curl" check_curl
 print_success "Dependências básicas instaladas!"
 
@@ -198,276 +176,26 @@ print_success "Dependências básicas instaladas!"
 register_validation "Git" check_git
 print_status "Verificando/Instalando Git..."
 if ! command_exists git; then
-    sudo apt-get install -y git
+    sudo dnf install -y git
     print_success "Git instalado!"
 else
     print_success "Git já está instalado!"
 fi
 
 # ====================================
-# 4. CHAVES SSH (GitHub)
-# Não cadastra identidade global: apenas chaves SSH para autenticação.
-# O usuário escolhe quantas chaves quer criar (sem limite; 0 = nenhuma) e,
-# antes de criar novas, é sempre perguntado se as existentes devem ser
-# apagadas. Para cada chave: email (comentário). O nome (arquivo/alias) só é
-# perguntado quando há mais de uma chave; com apenas 1 chave ele é fixado
-# automaticamente como "default".
+# 4. GITHUB CLI (gh)
+# Autenticação fica a cargo do usuário: rode "gh auth login" depois.
 # ====================================
-SSH_KEY_PATHS=()
-SSH_LABELS=()
-
-check_ssh_keys() {
-    local key
-    [ "${#SSH_KEY_PATHS[@]}" -gt 0 ] || return 1
-    for key in "${SSH_KEY_PATHS[@]}"; do
-        [ -f "$key" ] && [ -f "$key.pub" ] || return 1
-    done
-    [ -f "$HOME/.ssh/config" ] && grep -q '# >>> setup-linux' "$HOME/.ssh/config"
-}
-
-# Lista as chaves privadas existentes em ~/.ssh (padrões comuns: ed25519,
-# rsa, ecdsa e dsa, sempre ignorando os arquivos .pub).
-list_ssh_keys() {
-    local candidate pattern
-    for pattern in "$HOME"/.ssh/id_ed25519* "$HOME"/.ssh/id_rsa* \
-                   "$HOME"/.ssh/id_ecdsa* "$HOME"/.ssh/id_dsa*; do
-        [ -f "$pattern" ] || continue
-        case "$pattern" in
-            *.pub) continue ;;
-        esac
-        printf '%s\n' "$pattern"
-    done
-}
-
-# Em execução sem terminal não há prompts, mas uma configuração anterior
-# continua sendo validada.
-discover_ssh_keys() {
-    local key
-    while IFS= read -r key; do
-        [ -n "$key" ] && SSH_KEY_PATHS+=("$key")
-    done < <(list_ssh_keys)
-}
-
-# Apaga todas as chaves SSH existentes (removendo também do ssh-agent).
-delete_ssh_keys() {
-    local key
-    print_warning "Apagando chaves SSH existentes..."
-    while IFS= read -r key; do
-        [ -n "$key" ] || continue
-        ssh-add -d "$key" >/dev/null 2>&1 || true
-        rm -f "$key" "$key.pub"
-        print_success "Chave removida: $key"
-    done < <(list_ssh_keys)
-}
-
-# Testa a autenticação com o GitHub (o ssh -T sai com código 1 mesmo em
-# sucesso, por isso o texto da resposta é que decide).
-test_github_ssh() {
-    local host="$1" output
-    output="$(ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "$host" 2>&1 || true)"
-    if printf '%s' "$output" | grep -qi "successfully authenticated"; then
-        printf '%s' "$output"
-        return 0
-    fi
-    return 1
-}
-
-print_status "Configurando chaves SSH..."
-
-if ! command_exists ssh-keygen; then
-    sudo apt-get install -y openssh-client
+check_gh() { command_exists gh; }
+register_validation "GitHub CLI (gh)" check_gh
+print_status "Verificando/Instalando GitHub CLI (gh)..."
+if ! check_gh; then
+    sudo dnf install -y gh
     hash -r
-fi
-
-if [ ! -t 0 ]; then
-    print_warning "Execução não interativa detectada: seção de chaves SSH pulada."
-    print_warning "Execute o script em um terminal para gerar e configurar as chaves."
-    discover_ssh_keys
-    if [ "${#SSH_KEY_PATHS[@]}" -gt 0 ]; then
-        register_validation "Chaves SSH (GitHub)" check_ssh_keys
-    fi
+    command_exists gh
+    print_success "GitHub CLI instalado! ($(gh --version | head -n1))"
 else
-    # Quantas chaves o usuário quer criar (sem limite; 0 = nenhuma)
-    ssh_count=""
-    while [ -z "$ssh_count" ]; do
-        if ! read -r -p "Quantas chaves SSH você quer configurar? (0 = nenhuma): " ssh_count; then
-            echo ""
-            print_error "Entrada cancelada pelo usuário."
-            exit 1
-        fi
-        ssh_count="${ssh_count// /}"
-        if ! [[ "$ssh_count" =~ ^[0-9]+$ ]]; then
-            print_warning "Informe um número inteiro (0 ou mais)."
-            ssh_count=""
-        fi
-    done
-
-    # Antes de criar novas chaves, sempre pergunta se deve apagar as existentes
-    discover_ssh_keys
-    if [ "$ssh_count" -gt 0 ] && [ "${#SSH_KEY_PATHS[@]}" -gt 0 ]; then
-        print_warning "Chaves SSH existentes detectadas:"
-        printf '   %s\n' "${SSH_KEY_PATHS[@]}"
-        confirm_delete=""
-        while [ -z "$confirm_delete" ]; do
-            if ! read -r -p "Apagar as chaves existentes antes de criar as novas? (s/N): " delete_ans; then
-                echo ""
-                print_error "Entrada cancelada pelo usuário."
-                exit 1
-            fi
-            case "${delete_ans,,}" in
-                s|sim|y|yes)    confirm_delete="yes" ;;
-                n|nao|no|não|"") confirm_delete="no" ;;
-                *) print_warning "Responda sim (s) ou não (N)." ;;
-            esac
-        done
-        if [ "$confirm_delete" = "yes" ]; then
-            delete_ssh_keys
-            SSH_KEY_PATHS=()
-        else
-            print_warning "Chaves existentes mantidas."
-        fi
-    fi
-
-    if [ "$ssh_count" -eq 0 ]; then
-        # Nenhuma chave criada: remove o bloco gerenciado do ~/.ssh/config
-        ssh_config="$HOME/.ssh/config"
-        if [ -f "$ssh_config" ]; then
-            awk -v s="# >>> setup-linux" -v e="# <<< setup-linux" \
-                'index($0, s) == 1 { skip = 1; next } index($0, e) == 1 { skip = 0; next } !skip { print }' \
-                "$ssh_config" > "$ssh_config.tmp"
-            mv "$ssh_config.tmp" "$ssh_config"
-            chmod 600 "$ssh_config"
-            print_warning "Nenhuma chave criada; bloco gerenciado do $ssh_config removido."
-        else
-            print_warning "Nenhuma chave criada."
-        fi
-    else
-        # Nome e email de cada chave (quantas o usuário pediu)
-        ssh_emails=()
-        for ((i = 1; i <= ssh_count; i++)); do
-            # Nome da chave: usado no nome do arquivo e no alias do ~/.ssh/config
-            # Com apenas 1 chave não se pede nome: usa o padrão "default".
-            ssh_name=""
-            if [ "$ssh_count" -eq 1 ]; then
-                ssh_name="default"
-                print_status "Somente 1 chave solicitada: nome padrão \"default\" (sem perguntar)."
-            fi
-            while [ -z "$ssh_name" ]; do
-                if ! read -r -p "Nome da chave ${i} de ${ssh_count} (ex: pessoal, trabalho): " ssh_name; then
-                    echo ""
-                    print_error "Entrada cancelada pelo usuário."
-                    exit 1
-                fi
-                ssh_name="$(printf '%s' "$ssh_name" | sed 's/[^A-Za-z0-9_-]/-/g; s/--*/-/g; s/^-//; s/-$//')"
-                if [ -z "$ssh_name" ]; then
-                    print_warning "Informe um nome válido (letras, números, - ou _)."
-                    continue
-                fi
-                if printf '%s\n' "${SSH_LABELS[@]}" | grep -qxF "$ssh_name"; then
-                    print_warning "Nome já usado nesta execução. Escolha outro."
-                    ssh_name=""
-                fi
-            done
-            SSH_LABELS+=("$ssh_name")
-
-            # Email: vira o comentário da chave
-            ssh_email=""
-            while [ -z "$ssh_email" ] || [[ "$ssh_email" != *@* ]]; do
-                if ! read -r -p "Email da chave ${i} de ${ssh_count} (comentário): " ssh_email; then
-                    echo ""
-                    print_error "Entrada cancelada pelo usuário."
-                    exit 1
-                fi
-                if [ -z "$ssh_email" ] || [[ "$ssh_email" != *@* ]]; then
-                    print_warning "Informe um email válido (ex: seu.email@exemplo.com)."
-                fi
-            done
-            ssh_emails+=("$ssh_email")
-        done
-
-        mkdir -p "$HOME/.ssh"
-        chmod 700 "$HOME/.ssh"
-
-        # Gera cada chave (se o mesmo nome já existir sem ter sido apagado, reusa)
-        SSH_KEY_PATHS=()
-        for ((i = 0; i < ssh_count; i++)); do
-            key_path="$HOME/.ssh/id_ed25519_${SSH_LABELS[$i]}"
-
-            if [ -f "$key_path" ]; then
-                print_success "Chave já existe: $key_path"
-            else
-                ssh-keygen -t ed25519 -C "${ssh_emails[$i]}" -f "$key_path" -N "" -q
-                if [ ! -f "$key_path" ] || [ ! -f "$key_path.pub" ]; then
-                    print_error "Não foi possível gerar a chave $key_path."
-                    exit 1
-                fi
-                print_success "Chave gerada: $key_path (nome: ${SSH_LABELS[$i]}, email: ${ssh_emails[$i]})"
-            fi
-
-            chmod 600 "$key_path"
-            chmod 644 "$key_path.pub"
-            SSH_KEY_PATHS+=("$key_path")
-        done
-
-        # Bloco de ~/.ssh/config (removido e reescrito a cada execução)
-        ssh_config="$HOME/.ssh/config"
-        ssh_block="# >>> setup-linux: chaves SSH GitHub >>>"
-        ssh_block+=$'\n'"Host github.com github"
-        ssh_block+=$'\n'"    HostName github.com"
-        ssh_block+=$'\n'"    User git"
-        ssh_block+=$'\n'"    IdentityFile ${SSH_KEY_PATHS[0]}"
-        ssh_block+=$'\n'"    IdentitiesOnly yes"
-        ssh_block+=$'\n'"    AddKeysToAgent yes"
-
-        # Alias nomeado para cada chave (o github.com padrão usa a primeira)
-        for ((i = 0; i < ssh_count; i++)); do
-            ssh_block+=$'\n'""
-            ssh_block+=$'\n'"Host github-${SSH_LABELS[$i]}"
-            ssh_block+=$'\n'"    HostName github.com"
-            ssh_block+=$'\n'"    User git"
-            ssh_block+=$'\n'"    IdentityFile ${SSH_KEY_PATHS[$i]}"
-            ssh_block+=$'\n'"    IdentitiesOnly yes"
-            ssh_block+=$'\n'"    AddKeysToAgent yes"
-        done
-        ssh_block+=$'\n'"# <<< setup-linux: chaves SSH GitHub <<<"
-
-        if [ -f "$ssh_config" ]; then
-            awk -v s="# >>> setup-linux" -v e="# <<< setup-linux" \
-                'index($0, s) == 1 { skip = 1; next } index($0, e) == 1 { skip = 0; next } !skip { print }' \
-                "$ssh_config" > "$ssh_config.tmp"
-            mv "$ssh_config.tmp" "$ssh_config"
-        fi
-        printf '%s\n' "$ssh_block" >> "$ssh_config"
-        chmod 600 "$ssh_config"
-        print_success "Configuração SSH escrita em $ssh_config"
-
-        register_validation "Chaves SSH (GitHub)" check_ssh_keys
-
-        # Testa a autenticação de cada chave
-        print_status "Testando conexão SSH com o GitHub..."
-        for ((i = 0; i < ssh_count; i++)); do
-            if [ "$i" -eq 0 ]; then
-                ssh_host="git@github.com"
-            else
-                ssh_host="git@github-${SSH_LABELS[$i]}"
-            fi
-
-            if ssh_output="$(test_github_ssh "$ssh_host")"; then
-                print_success "$ssh_host autentica: $ssh_output"
-            else
-                print_warning "$ssh_host ainda não autentica."
-                print_warning "Adicione a chave pública abaixo no GitHub (Settings > SSH and GPG keys) e teste com: ssh -T $ssh_host"
-            fi
-        done
-
-        echo ""
-        print_status "Chaves públicas para adicionar no GitHub:"
-        for key_path in "${SSH_KEY_PATHS[@]}"; do
-            echo "   ${key_path}.pub"
-            echo "   $(cat "$key_path.pub")"
-            echo ""
-        done
-    fi
+    print_success "GitHub CLI já está instalado! ($(gh --version | head -n1))"
 fi
 
 # ====================================
@@ -500,22 +228,14 @@ else
 fi
 
 # ====================================
-# 5. DOCKER (repositório oficial)
+# 5. DOCKER (repositório oficial para Fedora)
 # ====================================
 register_validation "Docker Engine + Compose" check_docker
 print_status "Verificando/Instalando Docker Engine e Docker Compose..."
 if ! check_docker; then
-    # Repositório oficial do Docker (apt) com a chave GPG dele; /linux/ubuntu ou /linux/debian.
-    docker_distro="$ID"
-    if [ "$docker_distro" = "ubuntu" ] || [ -n "${UBUNTU_CODENAME:-}" ]; then docker_distro="ubuntu"; else docker_distro="debian"; fi
-    docker_codename="${UBUNTU_CODENAME:-${VERSION_CODENAME:-}}"
-    sudo install -m 0755 -d /etc/apt/keyrings
-    sudo curl -fsSL "https://download.docker.com/linux/$docker_distro/gpg" -o /etc/apt/keyrings/docker.asc
-    sudo chmod a+r /etc/apt/keyrings/docker.asc
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/$docker_distro $docker_codename stable" \
-        | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
-    sudo apt-get update
-    sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    # Repositório oficial do Docker (dnf) com a chave GPG dele.
+    sudo curl -fsSL https://download.docker.com/linux/fedora/docker-ce.repo -o /etc/yum.repos.d/docker-ce.repo
+    sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
     # Atualiza o cache de comandos do shell e comprova os executáveis.
     hash -r
@@ -541,12 +261,15 @@ register_validation "Node.js 24 LTS" check_node
 register_validation "npm" check_npm
 print_status "Verificando/Instalando Node.js 24..."
 if ! check_node || ! command_exists npm; then
-    # Repositório oficial NodeSource (deb). A validação da versão 24.x acontece logo abaixo.
+    # Repositório oficial NodeSource (rpm). A validação da versão 24.x acontece logo abaixo.
     nodesource_setup_tmp="$(mktemp)"
-    curl -fsSL https://deb.nodesource.com/setup_24.x -o "$nodesource_setup_tmp"
+    curl -fsSL https://rpm.nodesource.com/setup_24.x -o "$nodesource_setup_tmp"
     sudo -E bash "$nodesource_setup_tmp"
     rm -f "$nodesource_setup_tmp"
-    sudo apt-get install -y nodejs
+    sudo dnf install -y nodejs
+    # Se o Fedora já trouxe o nodejs 22 da base, o "install" acima não troca nada:
+    # o upgrade substitui pelo 24 do NodeSource (no-op se já estiver na versão nova).
+    sudo dnf upgrade -y --refresh nodejs
 
     hash -r
     if ! command_exists node || ! command_exists npm; then
@@ -565,7 +288,7 @@ else
 fi
 
 # ====================================
-# 7. ZSH + OH MY ZSH (shell principal)
+# 6.1 ZSH + OH MY ZSH + AUTOCOMPLETE (terminal principal)
 # ====================================
 register_validation "Zsh" check_zsh
 register_validation "Oh My Zsh" check_omz
@@ -574,7 +297,7 @@ register_validation "Zsh como shell padrão" check_zsh_login_shell
 
 print_status "Verificando/Instalando Zsh..."
 if ! command_exists zsh; then
-    sudo apt-get install -y zsh
+    sudo dnf install -y zsh
     hash -r
     if ! command_exists zsh; then
         print_error "O Zsh não ficou disponível após a instalação."
@@ -608,8 +331,8 @@ else
     print_success "Oh My Zsh já está instalado!"
 fi
 
-print_status "Instalando plugins do Zsh..."
-sudo apt-get install -y autojump
+print_status "Instalando plugins do Zsh (autosuggestions, completions, syntax highlighting)..."
+sudo dnf install -y autojump
 for entry in "${ZSH_EXTERNAL_PLUGINS[@]}"; do
     plugin_dir="$ZSH_CUSTOM_DIR/plugins/${entry%%=*}"
     if [ -d "$plugin_dir" ]; then
@@ -629,7 +352,7 @@ else
 fi
 print_success "Plugins ativados no ~/.zshrc!"
 
-print_status "Definindo Zsh como shell padrão..."
+print_status "Definindo Zsh como terminal/shell padrão..."
 zsh_path="$(command -v zsh)"
 if check_zsh_login_shell; then
     print_success "Zsh já é o shell padrão de $(id -un)!"
@@ -647,60 +370,22 @@ else
 fi
 
 # ====================================
-# 8. GOOGLE CHROME E VS CODE (.deb amd64 + dpkg)
+# 6.2 NEOVIM (nvim)
 # ====================================
-register_validation "Google Chrome" check_chrome
-register_validation "Visual Studio Code" check_vscode
-
-print_status "Verificando/Instalando Google Chrome..."
-if ! check_chrome; then
-    install_deb "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb"
-    print_success "Google Chrome instalado!"
+check_nvim() { command_exists nvim; }
+register_validation "Neovim (nvim)" check_nvim
+print_status "Verificando/Instalando Neovim..."
+if ! check_nvim; then
+    sudo dnf install -y neovim
+    hash -r
+    command_exists nvim
+    print_success "Neovim instalado! ($(nvim --version | head -n1))"
 else
-    print_success "Google Chrome já está instalado!"
+    print_success "Neovim já está instalado! ($(nvim --version | head -n1))"
 fi
 
-print_status "Verificando/Instalando Visual Studio Code..."
-if ! check_vscode; then
-    install_deb "https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-x64"
-    print_success "Visual Studio Code instalado!"
-else
-    print_success "Visual Studio Code já está instalado!"
-fi
-
-# IDs das extensões (publisher.nome); edite a lista à vontade.
-VSCODE_EXTENSIONS=(
-    "anthropic.claude-code"
-    "bradlc.vscode-tailwindcss"
-    "esbenp.prettier-vscode"
-    "expo.vscode-expo-tools"
-    "mikestead.dotenv"
-    "ms-azuretools.vscode-containers"
-    "ms-azuretools.vscode-docker"
-    "ms-kubernetes-tools.vscode-kubernetes-tools"
-    "ms-python.debugpy"
-    "ms-python.python"
-    "ms-python.vscode-python-envs"
-    "ms-vscode-remote.remote-containers"
-    "pkief.material-icon-theme"
-    "prisma.prisma"
-    "redhat.vscode-xml"
-    "redhat.vscode-yaml"
-    "typescriptteam.native-preview"
-)
-print_status "Instalando extensões do VS Code..."
-vscode_installed="$(code --list-extensions)"
-for ext in "${VSCODE_EXTENSIONS[@]}"; do
-    if grep -qixF "$ext" <<<"$vscode_installed"; then
-        print_success "$ext já está instalada!"
-    else
-        code --install-extension "$ext" >/dev/null
-        print_success "$ext instalada!"
-    fi
-done
-
 # ====================================
-# 9. VALIDAÇÃO FINAL (item a item)
+# 7. VALIDAÇÃO FINAL (item a item)
 # ====================================
 run_validations
 
@@ -713,7 +398,7 @@ echo ""
 print_success "Todas as ferramentas foram instaladas e validadas com sucesso!"
 echo ""
 echo "🔄 Faça logout/login para aplicar as configurações do Docker (grupo docker)"
-echo "🔄 Faça logout/login para entrar no seu novo shell padrão (zsh + Oh My Zsh)"
+echo "🔄 Faça logout/login para entrar no seu novo terminal padrão (zsh + Oh My Zsh)"
 echo "🔧 VERSÕES INSTALADAS:"
 if command_exists git;    then echo "   Git:        $(git --version)"; fi
 if command_exists curl;   then echo "   Curl:       $(curl --version | head -n1)"; fi
@@ -722,12 +407,11 @@ if command_exists node;   then echo "   Node.js:    $(node --version)"; fi
 if command_exists npm;    then echo "   NPM:        $(npm --version)"; fi
 if command_exists zsh;    then echo "   Zsh:        $(zsh --version)"; fi
 if check_omz;             then echo "   Oh My Zsh:  $(git -C "$HOME/.oh-my-zsh" describe --tags 2>/dev/null || echo 'instalado')"; fi
+if command_exists nvim;   then echo "   Neovim:     $(nvim --version | head -n1)"; fi
+if command_exists gh;     then echo "   GitHub CLI: $(gh --version | head -n1)"; fi
+echo ""
 
-if [ "${#SSH_KEY_PATHS[@]}" -gt 0 ]; then
-    for key_path in "${SSH_KEY_PATHS[@]}"; do
-        echo "   SSH key:    $key_path"
-    done
-fi
+echo "🔑 Para autenticar no GitHub, execute: gh auth login"
 echo ""
 
 # A identidade dos commits (user.name/user.email) não é cadastrada por este
