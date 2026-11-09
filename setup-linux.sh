@@ -159,7 +159,9 @@ echo ""
 # 1. ATUALIZAÇÃO DO SISTEMA
 # ====================================
 print_status "Atualizando pacotes do sistema..."
-sudo dnf upgrade -y --refresh
+# nodejs* fica de fora: o do Fedora (22) conflita com o do NodeSource (24) e
+# é tratado na etapa 6, que remove o do Fedora antes de instalar o 24.
+sudo dnf upgrade -y --refresh --exclude='nodejs*'
 print_success "Sistema atualizado!"
 
 # ====================================
@@ -266,10 +268,15 @@ if ! check_node || ! command_exists npm; then
     curl -fsSL https://rpm.nodesource.com/setup_24.x -o "$nodesource_setup_tmp"
     sudo -E bash "$nodesource_setup_tmp"
     rm -f "$nodesource_setup_tmp"
+    # O Fedora traz nodejs 22 (com npm próprio em /usr/bin/npm), que conflita com
+    # o pacote do NodeSource: remove os nodejs* do Fedora antes de instalar o 24.
+    fedora_node_pkgs=()
+    mapfile -t fedora_node_pkgs < <(rpm -qa --qf '%{NAME}\n' | grep -E '^nodejs' || true)
+    if [ "${#fedora_node_pkgs[@]}" -gt 0 ]; then
+        print_warning "Removendo Node.js da base do Fedora para instalar o 24: ${fedora_node_pkgs[*]}"
+        sudo dnf remove -y "${fedora_node_pkgs[@]}"
+    fi
     sudo dnf install -y nodejs
-    # Se o Fedora já trouxe o nodejs 22 da base, o "install" acima não troca nada:
-    # o upgrade substitui pelo 24 do NodeSource (no-op se já estiver na versão nova).
-    sudo dnf upgrade -y --refresh nodejs
 
     hash -r
     if ! command_exists node || ! command_exists npm; then
