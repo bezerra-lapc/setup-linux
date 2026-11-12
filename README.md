@@ -1,20 +1,28 @@
 # setup-linux
 
 [![Shell](https://img.shields.io/badge/Shell-Bash-89e051)]()
-[![Linux](https://img.shields.io/badge/Linux-Ubuntu%20LTS-E95420)]()
+[![Linux](https://img.shields.io/badge/Linux-Ubuntu-E95420)]()
 [![License](https://img.shields.io/badge/License-MIT-green)]()
 
-Script para configuração automatizada de ambiente de desenvolvimento no **Ubuntu LTS**.
+Script para configuração automatizada de ambiente de desenvolvimento no **Ubuntu**.
 
 ## Compatibilidade
 
-Distribuição suportada:
+- **Ubuntu** (qualquer versão — o script verifica `ID=ubuntu` em `/etc/os-release`)
+- Outras distribuições (**Linux Mint, Debian, Fedora** etc.) são recusadas com uma mensagem explicando o motivo
 
-- **Ubuntu LTS somente** (o script verifica `/etc/os-release`, exige `ID=ubuntu` e uma versão LTS — ano par com `.04`, como 24.04 e 26.04 — e recusa rodar em qualquer outra distribuição ou em versões não LTS)
+O script usa `apt`/`dpkg` e lê o codename do Ubuntu de `/etc/os-release` (com fallback para `lsb_release -cs`), para que os repositórios de terceiros apontem para a sua versão.
 
-Nenhuma outra distro é aceita: **Linux Mint, Debian, Fedora** etc. são recusados com uma mensagem explicando o motivo.
+## Política de versões
 
-O script utiliza `apt` e resolve o codename do Ubuntu diretamente de `VERSION_CODENAME` em `/etc/os-release` (com fallback para `lsb_release -cs`), portanto os repositórios de terceiros (Docker, NodeSource) sempre apontam para a sua versão LTS.
+Sempre que o programa tem uma linha **LTS**, é ela que é instalada:
+
+| Programa | Versão instalada |
+| --- | --- |
+| Node.js + npm | **LTS ativa mais recente** via NodeSource (`setup_lts.x`) — o major é detectado na hora, sem número fixo no script |
+| Docker | canal `stable` do repositório oficial (o Docker não tem LTS); se o repositório oficial ainda não suportar sua versão do Ubuntu, usa `docker.io` + `docker-compose-v2` do próprio Ubuntu |
+| Git, gh, Zsh, Neovim, autojump, Diodon | versão estável dos repositórios do Ubuntu |
+| Oh My Zsh e plugins do Zsh | versão atual dos repositórios oficiais no GitHub |
 
 ---
 
@@ -22,254 +30,106 @@ O script utiliza `apt` e resolve o codename do Ubuntu diretamente de `VERSION_CO
 
 ### Dependências base
 
-- **ca-certificates**, **gnupg**, **lsb-release**, **software-properties-common** - suporte aos repositórios
-- **curl** - para downloads e APIs
-- **openssh-client** - cliente SSH (chaves para o GitHub)
-- Habilita o repositório `universe`
+- **ca-certificates**, **curl**, **gnupg**, **software-properties-common**
+- Habilita o repositório `universe` (necessário para `gh`, `autojump` e `diodon`)
 
-### Git
+### Git + identidade
 
-- **git** - controle de versão
-- A identidade global (`user.name`/`user.email`) **não é cadastrada pelo script**: a autenticação é feita por chaves SSH e o autor dos commits pode ser configurado depois, se ainda não existir
+- **git** — controle de versão
+- Em terminal interativo, pergunta `user.name` e `user.email` globais (Enter mantém o valor atual)
 
-### Chaves SSH (GitHub)
+### GitHub CLI (gh)
 
-O script pergunta **quantas chaves** você quer configurar (**sem limite**; `0` = nenhuma) e, **sempre que novas chaves serão criadas**, pergunta se deve **apagar as existentes**:
-
-```text
-Quantas chaves SSH você quer configurar? (0 = nenhuma): 2
-Chaves SSH existentes detectadas:
-   /home/voce/.ssh/id_ed25519_antiga
-Apagar as chaves existentes antes de criar as novas? (s/N): s
-Nome da chave 1 de 2 (ex: pessoal, trabalho): pessoal
-Email da chave 1 de 2 (comentário): alice@exemplo.com
-Nome da chave 2 de 2 (ex: pessoal, trabalho): trabalho
-Email da chave 2 de 2 (comentário): bob@trabalho.com
-```
-
-- O **nome** define o arquivo (`~/.ssh/id_ed25519_<nome>`) e o alias no `~/.ssh/config` (ex: `github-pessoal`, `github-trabalho`)
-- O **email** vira o comentário da chave (`ssh-keygen -C`)
-- **Apagar as existentes** = sim: remove as chaves (padrões `id_ed25519*`, `id_rsa*`, `id_ecdsa*`, `id_dsa*` — privada e `.pub`, removendo também do ssh-agent) e cria as novas do zero; **não**: mantém e reusa chaves do mesmo nome
-- Nome inválido ou repetido faz o prompt se repetir (só aceita letras, números, `-` e `_`)
-- Escreve um bloco gerenciado em `~/.ssh/config` (`IdentitiesOnly yes` + `AddKeysToAgent yes`)
-- `github.com` usa a primeira chave; cada chave ganha um alias `github-<nome>`
-- Testa a autenticação com `ssh -T` e imprime a chave pública para colar no GitHub
+- **gh** — autentique depois com `gh auth login`
 
 ### Docker
 
-Instala o Docker Engine completo via repositório oficial:
+- `docker-ce`, `docker-ce-cli`, `containerd.io`, `docker-buildx-plugin`, `docker-compose-plugin`
+- Habilita e inicia o serviço e adiciona o usuário ao grupo `docker` (requer logout/login)
 
-- `docker-ce` (Docker Engine)
-- `docker-ce-cli` (CLI)
-- `containerd.io` (container runtime)
-- `docker-buildx-plugin` (Buildx)
-- `docker-compose-plugin` (Docker Compose v2)
+### Node.js LTS (NodeSource)
 
-Também:
-
-- Habilita e inicia o serviço Docker
-- Adiciona o usuário ao grupo `docker` (requer logout/login para efeito)
-
-### Node.js 24 LTS (NodeSource)
-
-Instala via NodeSource:
-
-- `node` (v24.x LTS)
-- `npm` (incluído)
+- `node` (LTS ativa) e `npm` (incluído)
+- Remove o pacote `npm` do Ubuntu, se existir, pois ele conflita com o do NodeSource
+- Em reexecuções, atualiza o Node quando sai uma nova LTS
 
 ### Zsh + Oh My Zsh (shell principal)
 
-- **zsh** - instalado via `apt`
-- **Oh My Zsh** - instalado via instalador oficial em `~/.oh-my-zsh` (modo `--unattended --keep-zshrc`, preservando um `~/.zshrc` já existente)
-- **Shell padrão** - o login do usuário é alterado para `zsh` (`chsh`), tornando-o o shell principal
+- **zsh** via `apt` e **Oh My Zsh** em `~/.oh-my-zsh` (`--unattended --keep-zshrc`)
+- Plugins: `git`, `zsh-autosuggestions`, `zsh-completions`, `history-substring-search`, `autojump`, `zsh-syntax-highlighting`
+- Define o `zsh` como shell de login (`chsh`)
+
+> ⚠️ A linha `plugins=(...)` do `~/.zshrc` é substituída inteira pela lista acima.
+
+### Neovim
+
+- **neovim** (`nvim`)
 
 ### Diodon
 
-Gerenciador de área de transferência (clipboard manager) do repositório `universe`:
+Gerenciador de área de transferência (clipboard manager):
 
-- `diodon` - interface GTK + indicador de painel
+- `diodon` — interface GTK + indicador de painel
 
 ---
 
 ## Validação item a item
 
-Cada programa da lista registra a própria validação (função que prova que ele está instalado) e, ao final, o script faz a conferência completa:
+Cada programa registra a própria validação e, ao final, o script confere tudo:
 
 ```text
-🔧 Validando item a item se cada programa está instalado...
-
 ✅ curl                           INSTALADO
 ✅ Git                            INSTALADO
-✅ Chaves SSH (GitHub)            INSTALADO
+✅ GitHub CLI (gh)                INSTALADO
 ✅ Docker Engine + Compose        INSTALADO
-✅ Node.js 24 LTS                INSTALADO
+✅ Node.js 26 LTS                 INSTALADO
 ✅ npm                            INSTALADO
 ✅ Zsh                            INSTALADO
 ✅ Oh My Zsh                      INSTALADO
+✅ Plugins do Zsh                 INSTALADO
 ✅ Zsh como shell padrão          INSTALADO
+✅ Neovim (nvim)                  INSTALADO
 ✅ Diodon (clipboard)             INSTALADO
-
-✅ Validação concluída: todos os 10 itens estão instalados!
 ```
 
-- **Todos OK**: o script termina com código `0`
-- **Falta algum item**: é listado como `NÃO INSTALADO` e o script termina com código `1` (útil em automação/CI)
-
-O que é validado:
+- **Todos OK**: termina com código `0`
+- **Falta algum item**: aparece como `NÃO INSTALADO` e o script termina com código `1`
 
 | Item | Critério |
 | --- | --- |
-| curl | comando `curl` disponível |
-| Git | comando `git` disponível |
-| Chaves SSH (GitHub) | arquivo(s) da(s) chave(s) + `.pub` existem e `~/.ssh/config` tem o bloco gerenciado |
-| Docker | comando `docker` + `docker compose version` |
-| Node.js 24 LTS | `node` presente e versão `v24.x` |
+| curl / Git / gh / Zsh / Neovim | comando disponível no `PATH` |
+| Docker | `docker` + `docker compose version` |
+| Node.js LTS | major igual ao da LTS atual e `process.release.lts` definido |
 | npm | comando `npm` disponível |
-| Zsh | comando `zsh` disponível |
 | Oh My Zsh | `~/.oh-my-zsh/oh-my-zsh.sh` existe |
-| Shell padrão | shell de login do usuário em `/etc/passwd` aponta para o `zsh` |
-| Diodon | pacote `diodon` instalado (`dpkg`) |
+| Plugins do Zsh | plugins clonados, `autojump` instalado e todos ativos no `~/.zshrc` |
+| Shell padrão | shell de login em `/etc/passwd` aponta para o `zsh` |
+| Diodon | pacote `diodon` instalado (`dpkg`) e comando disponível |
 
 ---
 
 ## Execução
 
-### Clone o repositório
-
 ```bash
-git clone https://github.com/bezerraluiz/setup-linux.git
-```
-
-### Entre na pasta
-
-```bash
+git clone https://github.com/bezerra-lapc/setup-linux.git
 cd setup-linux
-```
-
-### Permissão de execução
-
-```bash
 chmod +x setup-linux.sh
-```
-
-### Execute o script
-
-```bash
 ./setup-linux.sh
 ```
 
-> **Nota:** O script deve ser executado como usuário comum (não root), pois usa `sudo` internamente quando necessário.
-
----
-
-## Chaves SSH
-
-Durante a execução, o script faz apenas estas perguntas (não cadastra identidade global):
-
-```text
-Quantas chaves SSH você quer configurar? (0 = nenhuma): 2
-Chaves SSH existentes detectadas:
-   /home/voce/.ssh/id_ed25519_antiga
-Apagar as chaves existentes antes de criar as novas? (s/N): s
-Nome da chave 1 de 2 (ex: pessoal, trabalho): pessoal
-Email da chave 1 de 2 (comentário): alice@exemplo.com
-Nome da chave 2 de 2 (ex: pessoal, trabalho): trabalho
-Email da chave 2 de 2 (comentário): bob@trabalho.com
-```
-
-- **Número de chaves** → sem limite (qualquer inteiro ≥ 0); `0` não cria nada e ainda remove o bloco gerenciado do `~/.ssh/config`
-- **Apagar as existentes** → perguntado **sempre** que novas chaves serão criadas e já existirem chaves; `s` remove `id_ed25519*`, `id_rsa*`, `id_ecdsa*` e `id_dsa*` (privada + `.pub`, e do ssh-agent)
-- **Nome** → vira o nome do arquivo (`id_ed25519_<nome>`) e o alias no `~/.ssh/config` (só letras, números, `-` e `_`; repetido ou inválido, o prompt se repete)
-- **Email** → vira o comentário da chave (`ssh-keygen -C`)
-
-O que acontece em seguida:
-
-```bash
-# 1 conta (ex: nome "pessoal")
-~/.ssh/id_ed25519_pessoal          # chave privada
-~/.ssh/id_ed25519_pessoal.pub      # chave pública (colar no GitHub)
-
-# 2 contas (ex: nomes "pessoal" e "trabalho")
-~/.ssh/id_ed25519_pessoal
-~/.ssh/id_ed25519_trabalho
-```
-
-`~/.ssh/config` recebe um bloco gerenciado (removido e reescrito a cada execução, sem sobrescrever o resto do seu arquivo):
-
-```sshconfig
-# >>> setup-linux: chaves SSH GitHub >>>
-Host github.com github
-    HostName github.com
-    User git
-    IdentityFile /home/voce/.ssh/id_ed25519_pessoal
-    IdentitiesOnly yes
-    AddKeysToAgent yes
-
-Host github-pessoal
-    HostName github.com
-    User git
-    IdentityFile /home/voce/.ssh/id_ed25519_pessoal
-    IdentitiesOnly yes
-    AddKeysToAgent yes
-
-Host github-trabalho
-    ...
-# <<< setup-linux: chaves SSH GitHub <<<
-```
-
-`github.com` (ou `github`) sempre usa a **primeira** chave. Para usar a segunda conta em um repositório:
-
-```bash
-git remote set-url origin git@github-trabalho:usuario/repo.git
-```
-
-O script ainda imprime a(s) chave(s) pública(s) para colar em
-**GitHub > Settings > SSH and GPG keys** e testa com `ssh -T`.
-
-### Identidade dos commits (opcional)
-
-A chave SSH autentica o push/pull, mas o autor do commit continua sendo
-`user.name` + `user.email`. Se ainda não existir, o script avisa no final e você configura quando quiser:
-
-```bash
-git config --global user.name 'Seu Nome'
-git config --global user.email 'seu.email@exemplo.com'
-```
+> **Nota:** execute como usuário comum (não root); o script usa `sudo` internamente.
+> Pode ser reexecutado com segurança: o que já está instalado é mantido.
 
 ---
 
 ## Pós-instalação
 
-Após a execução completa:
-
-1. **Chaves SSH**: adicione a(s) chave(s) pública(s) no GitHub
-   (*Settings > SSH and GPG keys > New SSH key*) e valide com `ssh -T git@github.com`
-2. **Shell**: Faça **logout/login** para entrar no novo shell principal (**zsh + Oh My Zsh**)
-3. **Docker**: Faça **logout/login** (ou reinicie) para usar Docker sem `sudo`
-4. **Diodon**: Configure o atalho de teclado (Ubuntu/GNOME):
-   - Vá em: *Configurações > Teclado > Atalhos > Atalhos personalizados*
-   - Nome: `Diodon`
-   - Comando: `/usr/bin/diodon`
-   - Atalho: `Super + V` (tecla Windows + V)
-
----
-
-## Verificação das versões
-
-Ao final, o script exibe as versões instaladas e o shell padrão:
-
-```text
-Git:        git version 2.x.x
-Curl:       curl 8.x.x
-Docker:     Docker version 29.x.x
-Node.js:    v24.x.x
-NPM:        10.x.x
-Zsh:        zsh 5.x.x
-Oh My Zsh:  master
-Diodon:     1.13.0
-Shell:      /usr/bin/zsh
-SSH key:    /home/voce/.ssh/id_ed25519_pessoal
-```
+1. **GitHub**: `gh auth login`
+2. **Shell**: faça **logout/login** para entrar no **zsh + Oh My Zsh**
+3. **Docker**: faça **logout/login** (ou reinicie) para usar Docker sem `sudo`
+4. **Diodon**: configure o atalho de teclado (Ubuntu/GNOME):
+   - *Configurações > Teclado > Atalhos > Atalhos personalizados*
+   - Nome: `Diodon` · Comando: `/usr/bin/diodon` · Atalho: `Super + V`
 
 ---
 
