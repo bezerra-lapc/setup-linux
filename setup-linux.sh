@@ -3,7 +3,7 @@
 # Script completo para configuração do ambiente de desenvolvimento Ubuntu
 # Autor: Guilherme Celso (adaptado)
 # Descrição: Automatiza a instalação e a validação de ferramentas essenciais
-#            no Ubuntu (apt/dpkg). Outras distribuições são recusadas.
+#            no Ubuntu e em derivados como o Linux Mint (apt/dpkg).
 
 set -Eeuo pipefail
 
@@ -114,11 +114,6 @@ check_zsh_plugins() {
     done
 }
 
-# Ubuntu: ID do /etc/os-release.
-is_ubuntu() {
-    [ "${ID:-}" = "ubuntu" ]
-}
-
 on_error() {
     local exit_code=$?
     print_error "A instalação falhou na linha ${BASH_LINENO[0]} (comando: ${BASH_COMMAND})."
@@ -157,12 +152,6 @@ fi
 
 # shellcheck disable=SC1091
 . /etc/os-release
-
-if ! is_ubuntu; then
-    print_error "Este script foi feito para Ubuntu (apt/dpkg)."
-    print_warning "Sistema detectado: ${PRETTY_NAME:-desconhecido}"
-    exit 1
-fi
 
 UBUNTU_CODENAME="${UBUNTU_CODENAME:-${VERSION_CODENAME:-}}"
 if [ -z "$UBUNTU_CODENAME" ] && command_exists lsb_release; then
